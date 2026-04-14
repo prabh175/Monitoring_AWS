@@ -1,0 +1,43 @@
+# Promtail — journal + optional Consul file logs. Install promtail binary from Grafana releases.
+# Set clients[0].url to your Loki push endpoint (must be reachable from this VPC).
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://REPLACE_LOKI_HOST:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: journal
+    journal:
+      json: false
+      max_age: 12h
+      path: /var/log/journal
+      labels:
+        job: systemd-journal
+    relabel_configs:
+      - source_labels: [__journal__systemd_unit]
+        target_label: unit
+
+# Optional: Consul text logs if you redirect them to a file.
+#  - job_name: consul-file
+#    static_configs:
+#      - targets:
+#          - localhost
+#        labels:
+#          job: consul
+#          __path__: /var/log/consul/consul.log
+
+# Example systemd unit (save as /etc/systemd/system/promtail.service):
+# [Unit]
+# Description=Grafana Promtail
+# After=network-online.target
+# [Service]
+# ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/config.yaml
+# Restart=always
+# [Install]
+# WantedBy=multi-user.target

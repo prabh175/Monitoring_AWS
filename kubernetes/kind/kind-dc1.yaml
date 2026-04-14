@@ -1,0 +1,17 @@
+# Single-node kind cluster (one VM or one Docker host per "datacenter").
+# kind runs the control plane on this node and schedules workloads here (no extra workers).
+# Mesh gateway, Consul servers, and apps are all pods on this same cluster.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: dc1
+networking:
+  podSubnet: "10.210.0.0/16"
+  serviceSubnet: "10.211.0.0/16"
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "topology.kubernetes.io/zone=dc1"

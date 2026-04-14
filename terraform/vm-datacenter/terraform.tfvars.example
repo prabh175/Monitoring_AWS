@@ -1,0 +1,25 @@
+# Copy to terraform.tfvars (gitignored) or use TF_VAR_* — see .env.example
+# docs/SECRETS-AND-LOCAL-CONFIG.md
+
+aws_region   = "us-east-1"
+project_name = "consul-mesh-demo"
+
+vpc_id     = "vpc-xxxxxxxx"
+subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+
+ssh_key_name = "your-ec2-keypair-name"
+
+consul_server_instance_type = "t3.small"
+hashicups_instance_type     = "t3.micro"
+
+# Same public zone as terraform/aws (split-horizon private zone must exist first).
+route53_public_zone_name = "your-public-hosted-zone.example.com"
+
+# Optional: local path to .hclic — validated at terraform plan; not uploaded (copy to VM yourself).
+# consul_enterprise_license_path = "/absolute/path/to/license.hclic"
+
+# Consul server: dnsmasq :53 → Consul :8600
+enable_consul_dns_bridge = true
+
+# Optional: trim or extend the set (one EC2 per entry).
+# hashicups_services = ["postgres", "product-api", "payments", "public-api", "frontend"]

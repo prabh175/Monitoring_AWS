@@ -1,0 +1,12 @@
+# Dialer on dc2: uses the secret exported from dc1 (same name/key after you import it).
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: PeeringDialer
+metadata:
+  name: dc1
+  namespace: consul
+spec:
+  peer:
+    secret:
+      backend: kubernetes
+      name: peering-token-dc2
+      key: data

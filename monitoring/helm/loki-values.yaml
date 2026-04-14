@@ -1,0 +1,36 @@
+# Grafana Loki — SingleBinary (monolithic). Chart: grafana/loki
+# Reference: https://grafana.com/docs/loki/latest/setup/install/helm/install-monolithic/
+# If Helm rejects unknown keys, run: helm show values grafana/loki and align with your chart version.
+
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  ring:
+    kvstore:
+      store: inmemory
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 20Gi
+
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+gateway:
+  enabled: false
+
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false

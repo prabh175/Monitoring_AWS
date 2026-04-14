@@ -1,0 +1,18 @@
+# Promtail — ships pod logs to Loki. Chart: grafana/promtail
+# Default assumes Loki runs in the same cluster/namespace as this release.
+
+config:
+  clients:
+    - url: http://loki.monitoring.svc:3100/loki/api/v1/push
+
+# Tolerations: scrape logs on all nodes (including masters) if needed.
+tolerations:
+  - effect: NoSchedule
+    operator: Exists
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi

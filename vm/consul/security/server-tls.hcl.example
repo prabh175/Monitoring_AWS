@@ -1,0 +1,17 @@
+# Merge as e.g. /etc/consul.d/server-tls.hcl after placing PEMs under /etc/consul.d/tls/
+# Adjust filenames to match `consul tls cert create` output on your host.
+
+tls {
+  defaults {
+    ca_file   = "/etc/consul.d/tls/consul-agent-ca.pem"
+    cert_file = "/etc/consul.d/tls/dc-vm-server-consul-0.pem"
+    key_file  = "/etc/consul.d/tls/dc-vm-server-consul-0-key.pem"
+
+    verify_incoming = true
+    verify_outgoing = true
+  }
+
+  internal_rpc {
+    verify_server_hostname = true
+  }
+}

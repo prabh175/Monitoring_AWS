@@ -1,0 +1,11 @@
+# Example: export HashiCups frontend to peer "dc2". Service name must match Consul registration.
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ExportedServices
+metadata:
+  name: default
+  namespace: consul
+spec:
+  services:
+    - name: frontend
+      consumers:
+        - peerName: dc2

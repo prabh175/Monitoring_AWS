@@ -1,0 +1,15 @@
+# Client agents: merge as e.g. /etc/consul.d/acl.hcl
+# Create an agent token on the server after ACLs are enabled, then substitute below.
+#
+# default (optional) can carry read policies for DNS/catalog if workloads rely on agent DNS.
+
+acl {
+  enabled        = true
+  default_policy = "deny"
+  down_policy    = "extend-cache"
+
+  tokens {
+    agent   = "REPLACE_WITH_AGENT_TOKEN"
+    default = "REPLACE_WITH_DEFAULT_TOKEN_OPTIONAL"
+  }
+}

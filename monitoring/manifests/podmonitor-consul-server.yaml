@@ -1,0 +1,25 @@
+# Scrapes Consul server HTTPS metrics with ACL bearer token.
+# 1) Create token + secret (see monitoring/README.md).
+# 2) If your Helm release name is not "consul" or app label differs, adjust selector.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: consul-server
+  namespace: consul
+spec:
+  podMetricsEndpoints:
+    - port: https
+      path: /v1/agent/metrics
+      scheme: https
+      params:
+        format:
+          - prometheus
+      tlsConfig:
+        insecureSkipVerify: true
+      bearerTokenSecret:
+        name: consul-prometheus-token
+        key: token
+  selector:
+    matchLabels:
+      app: consul
+      component: server

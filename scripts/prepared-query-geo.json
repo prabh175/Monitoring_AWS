@@ -1,0 +1,17 @@
+{
+  "Name": "geo-hashicups",
+  "Token": "",
+  "Template": {
+    "Type": "name_prefix_match",
+    "NamePrefixMatch": "hashicups"
+  },
+  "Service": {
+    "Service": "frontend",
+    "OnlyPassing": true,
+    "IgnoreCheckIDs": []
+  },
+  "Failover": {
+    "NearestN": 2,
+    "Datacenters": ["dc1", "dc2", "dc-vm"]
+  }
+}

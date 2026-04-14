@@ -1,0 +1,70 @@
+# DC2 — same as DC1 except datacenter name and optional UI Prometheus override.
+
+global:
+  enabled: true
+  name: consul
+  domain: consul
+  datacenter: dc2
+  image: hashicorp/consul-enterprise:1.21.6-ent-ubi
+  imageK8S: hashicorp/consul-k8s-control-plane:1.8.3-ubi
+  imageConsulDataplane: hashicorp/consul-dataplane:1.8.3-ubi
+  imagePullSecrets: []
+  enterpriseLicense:
+    secretName: consul-enterprise-license
+    secretKey: key
+    enableLicenseAutoload: true
+  tls:
+    enabled: true
+    httpsOnly: false
+  acls:
+    manageSystemACLs: true
+  metrics:
+    enabled: true
+    enableAgentMetrics: true
+    enableGatewayMetrics: true
+    agentMetricsRetentionTime: "1m"
+  peering:
+    enabled: true
+
+server:
+  enabled: true
+  replicas: 3
+  storageClass: standard
+  extraConfig: |
+    {
+      "log_level": "TRACE"
+    }
+
+ui:
+  enabled: true
+  service:
+    type: LoadBalancer
+  metrics:
+    enabled: true
+    provider: "prometheus"
+    baseURL: "http://kps-kube-prometheus-prometheus.monitoring.svc:9090"
+
+connectInject:
+  enabled: true
+  transparentProxy:
+    defaultEnabled: true
+    defaultOverwriteProbes: true
+  metrics:
+    defaultEnabled: true
+    defaultEnableMerging: true
+    defaultMergedMetricsPort: "20100"
+    defaultPrometheusScrapePath: "/metrics"
+  apiGateway:
+    manageExternalCRDs: true
+    managedGatewayClass:
+      serviceType: LoadBalancer
+
+meshGateway:
+  enabled: true
+  replicas: 1
+  wanAddress:
+    source: Service
+  service:
+    type: NodePort
+    port: 443
+    nodePort: 31443

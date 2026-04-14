@@ -1,0 +1,87 @@
+# kube-prometheus-stack — DC1: Prometheus + Grafana + Alertmanager
+# Chart: prometheus-community/kube-prometheus-stack
+# Install: helm upgrade --install kps prometheus-community/kube-prometheus-stack -n monitoring -f kube-prometheus-stack-values.yaml
+
+fullnameOverride: ""
+
+defaultRules:
+  create: true
+
+alertmanager:
+  enabled: true
+
+grafana:
+  enabled: true
+  adminPassword: changeme
+  persistence:
+    enabled: false
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring.svc:3100
+      isDefault: false
+      jsonData:
+        maxLines: 1000
+
+prometheus:
+  enabled: true
+  prometheusSpec:
+    retention: 15d
+    scrapeInterval: 30s
+    podMonitorNamespaceSelector: {}
+    # Discover PodMonitors / ServiceMonitors cluster-wide (not only this Helm release).
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    # Scrape pods annotated by Consul chart and others (prometheus.io/*).
+    additionalScrapeConfigs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          # Consul servers: use PodMonitor + bearer token (ACL); avoid duplicate/failed scrapes here.
+          - source_labels: [__meta_kubernetes_pod_label_component]
+            regex: server
+            action: drop
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+          # Consul: annotation path is /v1/agent/metrics; add format=prometheus for scrape.
+          - source_labels: [__metrics_path__]
+            regex: ^/v1/agent/metrics$
+            action: replace
+            target_label: __metrics_path__
+            replacement: /v1/agent/metrics?format=prometheus
+
+prometheusOperator:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true

@@ -1,0 +1,10 @@
+# Optional: only when your cluster has no suitable default StorageClass.
+# kind often already provides "standard" (local-path). On EKS use gp2/gp3 and set
+# server.storageClass in Helm accordingly—do not apply this blindly.
+
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: consul-local-path
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer

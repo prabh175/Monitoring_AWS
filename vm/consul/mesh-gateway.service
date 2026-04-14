@@ -1,0 +1,26 @@
+# Consul Connect mesh gateway on the consul-server VM (WAN-facing for cluster peering to Kubernetes).
+# 1) Replace REPLACE_WITH_PRIVATE_IP with this host's private IP (same as advertise_addr in server.hcl).
+# 2) Install after Consul server is healthy: sudo systemctl enable --now mesh-gateway
+#
+# Peers (e.g. kind clusters) must reach TCP 8443 on this IP (see terraform/vm-datacenter security group).
+
+[Unit]
+Description=Consul Connect Mesh Gateway
+After=consul.service
+Requires=consul.service
+
+[Service]
+Type=simple
+User=consul
+Group=consul
+EnvironmentFile=-/etc/consul.d/consul.env
+ExecStart=/usr/bin/consul connect envoy \
+  -gateway=mesh \
+  -register \
+  -service=mesh-gateway \
+  -address=REPLACE_WITH_PRIVATE_IP \
+  -port=8443
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

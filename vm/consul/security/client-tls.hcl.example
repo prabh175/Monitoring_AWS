@@ -1,0 +1,17 @@
+# Merge as e.g. /etc/consul.d/client-tls.hcl on each client VM.
+# Use a client cert issued from the same CA as the server (unique per node recommended).
+
+tls {
+  defaults {
+    ca_file   = "/etc/consul.d/tls/consul-agent-ca.pem"
+    cert_file = "/etc/consul.d/tls/dc-vm-client-consul-0.pem"
+    key_file  = "/etc/consul.d/tls/dc-vm-client-consul-0-key.pem"
+
+    verify_incoming = true
+    verify_outgoing = true
+  }
+
+  internal_rpc {
+    verify_server_hostname = true
+  }
+}
