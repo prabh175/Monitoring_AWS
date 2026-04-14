@@ -2,26 +2,43 @@
 
 Layered demo material for **Consul Enterprise** on **two Kubernetes clusters** (for example `kind` on EC2 or OpenShift) plus a **VM Consul datacenter**, with **cluster peering**, **mesh gateways** (NodePort `31443`), **metrics**, and **prepared queries**. Automation is intentionally thin so the steps stay visible for learning.
 
-## Documentation in this repo
+## How to use this README
 
-| Document | Purpose |
-|----------|---------|
-| [docs/AI-SESSION-BRIEF.md](docs/AI-SESSION-BRIEF.md) | **Start here for new AI chats:** goals, topology, operator settings via gitignored tfvars / `TF_VAR_*` |
-| [docs/SECRETS-AND-LOCAL-CONFIG.md](docs/SECRETS-AND-LOCAL-CONFIG.md) | Gitignored files, `TF_VAR_*`, license path variable, leak checks |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Topology, DNS vs prepared queries, mesh gateway notes, OpenShift vs kind |
-| [docs/PREPARED-QUERIES.md](docs/PREPARED-QUERIES.md) | How to register and execute prepared queries |
-| [monitoring/README.md](monitoring/README.md) | Prometheus / Grafana / Loki / Promtail install order |
-| [kubernetes/helm/consul/README.md](kubernetes/helm/consul/README.md) | Helm-specific notes (license, image pull, Prometheus URL) |
-| [kubernetes/manifests/peering/README.md](kubernetes/manifests/peering/README.md) | Peering secret export/import flow |
-| [kubernetes/manifests/api-gateway/README.md](kubernetes/manifests/api-gateway/README.md) | Public HTTP routes (Gateway API) for HashiCups / Consul UI |
-| [terraform/aws/README.md](terraform/aws/README.md) | VPC, kind nodes, bastion variables and outputs |
-| [kubernetes/kind/README.md](kubernetes/kind/README.md) | Single-node kind per VM; mesh gateway on-cluster |
-| [vm/README.md](vm/README.md) | VM Consul server + HashiCups (one service per VM), Terraform, monitoring |
-| [terraform/vm-datacenter/README.md](terraform/vm-datacenter/README.md) | EC2 layout for VM datacenter |
-| [docs/DNS-ROUTE53-CONSUL.md](docs/DNS-ROUTE53-CONSUL.md) | Route53 zone vs `.consul`, split-horizon, prepared-query URLs, optional dnsmasq :53 bridge |
-| [docs/SECURITY.md](docs/SECURITY.md) | Mesh, mTLS, Consul TLS, ACLs: K8s (Helm) vs VM (dc-vm) |
-| [docs/TARGET-ARCHITECTURE.md](docs/TARGET-ARCHITECTURE.md) | How this repo compares to the target diagram (4 VMs vs 6, API GW on VMs, etc.) |
-| [docs/ACCESS.md](docs/ACCESS.md) | Bastion SSH, API Gateway public access, prepared queries from your laptop |
+1. **Do the install in order:** follow [End-to-end install (step-by-step)](#end-to-end-install-step-by-step). Each step lists **Skip if**, **Read**, and **Run**.
+2. **Look up details** in the [Documentation index](#documentation-index-reference) when you need depth (security, DNS, architecture).
+3. **Local secrets:** [docs/SECRETS-AND-LOCAL-CONFIG.md](docs/SECRETS-AND-LOCAL-CONFIG.md) and [`.env.example`](.env.example) — copy to gitignored `terraform.tfvars` / `.env`.
+
+**Typical paths**
+
+| Path | Steps |
+|------|--------|
+| **Full AWS lab** (VPC, kind on EC2, optional VM dc, monitoring) | [0](#step-0--local-config-first) through [9](#step-9--prepared-queries) in order |
+| **Laptop only** (two kind clusters already local) | [0](#step-0--local-config-first) → skip [1](#step-1--aws-vpc-and-hosts-optional), [7](#step-7--vm-datacenter-optional), [8](#step-8--monitoring-on-vms) → run [2](#step-2--kubernetes-clusters) … [6](#step-6--observability-kubernetes), then [9](#step-9--prepared-queries) if needed |
+
+---
+
+## Documentation index (reference)
+
+| Document | When to read it |
+|----------|-----------------|
+| [docs/AI-SESSION-BRIEF.md](docs/AI-SESSION-BRIEF.md) | Whole-project context for you or an AI assistant |
+| [docs/SECRETS-AND-LOCAL-CONFIG.md](docs/SECRETS-AND-LOCAL-CONFIG.md) | What must stay out of git; `TF_VAR_*`; license handling |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Topology, mesh gateways, DNS vs prepared queries |
+| [docs/SECURITY.md](docs/SECURITY.md) | Mesh, TLS, ACLs on Kubernetes vs VM defaults |
+| [docs/DNS-ROUTE53-CONSUL.md](docs/DNS-ROUTE53-CONSUL.md) | Route53 hostnames vs Consul `.consul`; split horizon |
+| [docs/ACCESS.md](docs/ACCESS.md) | Bastion, SSH jump, port-forward, optional API GW pattern |
+| [docs/PREPARED-QUERIES.md](docs/PREPARED-QUERIES.md) | Register / execute prepared queries |
+| [docs/TARGET-ARCHITECTURE.md](docs/TARGET-ARCHITECTURE.md) | How this repo differs from a reference diagram |
+| [terraform/aws/README.md](terraform/aws/README.md) | AWS Terraform variables, outputs, bastion |
+| [terraform/vm-datacenter/README.md](terraform/vm-datacenter/README.md) | VM EC2 Terraform (after `terraform/aws` if using Route53) |
+| [kubernetes/kind/README.md](kubernetes/kind/README.md) | kind configs (`dc1` / `dc2`) |
+| [kubernetes/helm/consul/README.md](kubernetes/helm/consul/README.md) | Helm install, license secret, chart version pin |
+| [kubernetes/manifests/peering/README.md](kubernetes/manifests/peering/README.md) | Peering acceptor / dialer / exported services |
+| [kubernetes/manifests/api-gateway/README.md](kubernetes/manifests/api-gateway/README.md) | Optional HTTPRoutes on **Kubernetes only** |
+| [kubernetes/workloads/hashicups/README.md](kubernetes/workloads/hashicups/README.md) | HashiCups on Kubernetes pointers |
+| [vm/README.md](vm/README.md) | Consul + HashiCups on VMs after Terraform |
+| [monitoring/README.md](monitoring/README.md) | Prometheus, Grafana, Loki, Promtail on K8s |
+| [vm/monitoring/README.md](vm/monitoring/README.md) | Metrics/logs on Consul / HashiCups VMs |
 
 ## Prerequisites
 
@@ -41,9 +58,73 @@ Official references:
 
 ---
 
-## Installation procedure (recommended order)
+## End-to-end install (step-by-step)
 
-### 1. AWS networking and hosts (optional)
+Each step below lists **Skip if**, **Read**, and **Run**. Subsections that follow are the detailed commands.
+
+### Step 0 — Local config (first)
+
+- **Skip if:** License and tfvars are already set locally and nothing sensitive is committed.
+- **Read:** [docs/SECRETS-AND-LOCAL-CONFIG.md](docs/SECRETS-AND-LOCAL-CONFIG.md)
+- **Run:** [`.env.example`](.env.example) → `.env`; `terraform/aws/terraform.tfvars.example` → gitignored `terraform.tfvars`; export `CONSUL_LICENSE_*` / `TF_VAR_*` as needed.
+
+### Step 1 — AWS VPC and hosts (optional)
+
+- **Skip if:** You are not using `terraform/aws` (e.g. local kind only).
+- **Read:** [terraform/aws/README.md](terraform/aws/README.md), [docs/ACCESS.md](docs/ACCESS.md)
+- **Run:** [AWS networking and hosts (detailed commands)](#aws-networking-and-hosts-optional) below.
+
+### Step 2 — Kubernetes clusters
+
+- **Skip if:** `dc1` and `dc2` contexts already exist as in [kubernetes/kind/README.md](kubernetes/kind/README.md).
+- **Read:** [kubernetes/kind/README.md](kubernetes/kind/README.md)
+- **Run:** [Kubernetes clusters (detailed commands)](#kubernetes-clusters) below.
+
+### Step 3 — Consul on Kubernetes (license + Helm)
+
+- **Read:** [kubernetes/helm/consul/README.md](kubernetes/helm/consul/README.md)
+- **Run:** [License secret](#consul-enterprise-license-secret-each-cluster) and [Helm install](#install-consul-with-helm-each-cluster) below.
+
+### Step 4 — Cluster peering
+
+- **Read:** [kubernetes/manifests/peering/README.md](kubernetes/manifests/peering/README.md)
+- **Run:** [Cluster peering (detailed commands)](#cluster-peering-manual) below.
+
+### Step 5 — Workloads and optional API Gateway
+
+- **Skip if:** You only need an empty mesh (unusual for this demo).
+- **Read:** [kubernetes/workloads/hashicups/README.md](kubernetes/workloads/hashicups/README.md); optional HTTP routes: [kubernetes/manifests/api-gateway/README.md](kubernetes/manifests/api-gateway/README.md) (**Kubernetes only**; VMs use Connect per [vm/README.md](vm/README.md)).
+- **Run:** [Workloads (HashiCups)](#workloads-hashicups) below.
+
+### Step 6 — Observability (Kubernetes)
+
+- **Skip if:** You are not deploying Prometheus / Grafana / Loki on the kind clusters.
+- **Read:** [monitoring/README.md](monitoring/README.md)
+- **Run:** [Observability on Kubernetes](#observability-prometheus-grafana-loki-promtail) below.
+
+### Step 7 — VM datacenter (optional)
+
+- **Skip if:** You only need the two Kubernetes datacenters.
+- **Read:** [terraform/vm-datacenter/README.md](terraform/vm-datacenter/README.md), [vm/README.md](vm/README.md), [docs/DNS-ROUTE53-CONSUL.md](docs/DNS-ROUTE53-CONSUL.md)
+- **Run:** [VM datacenter](#vm-datacenter-optional-third-site) below.
+
+### Step 8 — Monitoring on VMs
+
+- **Skip if:** Step 7 skipped or you do not need metrics/logs on Consul / HashiCups VMs.
+- **Read:** [vm/monitoring/README.md](vm/monitoring/README.md)
+- **Run:** As part of VM bring-up in [vm/README.md](vm/README.md) and [vm/monitoring/README.md](vm/monitoring/README.md) (legacy copy: [monitoring/vm/README.md](monitoring/vm/README.md)).
+
+### Step 9 — Prepared queries
+
+- **Skip if:** You do not need geo / failover query demos.
+- **Read:** [docs/PREPARED-QUERIES.md](docs/PREPARED-QUERIES.md), [docs/ACCESS.md](docs/ACCESS.md)
+- **Run:** [Prepared queries (detailed commands)](#prepared-queries) below.
+
+---
+
+## Detailed commands (same order as Steps 1–9 above; Step 0 is config-only)
+
+### AWS networking and hosts (optional)
 
 From `terraform/aws` (see [terraform/aws/README.md](terraform/aws/README.md) and [terraform/aws/terraform.tfvars.example](terraform/aws/terraform.tfvars.example)):
 
@@ -64,7 +145,7 @@ Default **`node_count` is 2** so you can use **one EC2 instance per kind cluster
 
 Open **TCP 31443** between sites that must reach mesh gateways (already allowed in the example security group for the VPC CIDR—adjust for your real topology).
 
-### 2. Kubernetes clusters
+### Kubernetes clusters
 
 **Option A — kind (local or on EC2)**
 
@@ -89,7 +170,7 @@ Provision two clusters (or two logical datacenters). Set `global.openshift.enabl
 - **kind:** if server PVCs fail to bind, apply [kubernetes/manifests/storageclass-kind.yaml](kubernetes/manifests/storageclass-kind.yaml) and set `server.storageClass` in Helm to that name, or use the default `standard` if it already exists.
 - **EKS:** set `server.storageClass` to `gp2` or `gp3` in the values files.
 
-### 3. Consul Enterprise license secret (each cluster)
+### Consul Enterprise license secret (each cluster)
 
 Do **not** commit the license file. From the repo root (after `kubectl create namespace consul`):
 
@@ -102,7 +183,7 @@ Or use `kubectl create secret generic ... --from-file=key=...` as in [kubernetes
 
 If images pull from a private registry, create a pull secret and list it under `global.imagePullSecrets` in [kubernetes/helm/consul/values-dc1.yaml](kubernetes/helm/consul/values-dc1.yaml) and [values-dc2.yaml](kubernetes/helm/consul/values-dc2.yaml).
 
-### 4. Install Consul with Helm (each cluster)
+### Install Consul with Helm (each cluster)
 
 ```bash
 helm repo add hashicorp https://helm.releases.hashicorp.com
@@ -133,7 +214,7 @@ Wait until Consul server pods and connect injector are ready. If the Consul UI `
 kubectl port-forward -n consul svc/consul-ui 8501:443
 ```
 
-### 5. Cluster peering (manual)
+### Cluster peering (manual)
 
 Follow [kubernetes/manifests/peering/README.md](kubernetes/manifests/peering/README.md). Summary:
 
@@ -149,15 +230,11 @@ kubectl explain peeringacceptor.spec --api-version=consul.hashicorp.com/v1alpha1
 kubectl explain peeringdialer.spec --api-version=consul.hashicorp.com/v1alpha1
 ```
 
-### 6. Workloads (HashiCups)
+### Workloads (HashiCups)
 
 Deploy HashiCups with Connect injection enabled. Pointers: [kubernetes/workloads/hashicups/README.md](kubernetes/workloads/hashicups/README.md) and the [Kubernetes observability tutorial](https://developer.hashicorp.com/consul/tutorials/get-started-kubernetes/kubernetes-gs-observability#deploy-observability-suite).
 
-### 7. VM datacenter (optional third site)
-
-Use **[terraform/vm-datacenter](terraform/vm-datacenter)** for EC2: **one** Consul server VM and **one VM per HashiCups service** (each with its own private IP). Follow **[vm/README.md](vm/README.md)** for Consul (`vm/consul/*`), HashiCups Docker scripts (`vm/hashicups/scripts/`), mesh gateway on the server VM, and **[vm/monitoring/README.md](vm/monitoring/README.md)** for node_exporter and Promtail. Peer **dc-vm** to Kubernetes using your Consul version’s **VM ↔ K8s peering** guidance and the mesh gateway on **TCP 8443**.
-
-### 8. Observability (Prometheus, Grafana, Loki, Promtail)
+### Observability (Prometheus, Grafana, Loki, Promtail)
 
 Follow **[monitoring/README.md](monitoring/README.md)** for Helm values and apply order:
 
@@ -168,7 +245,11 @@ Follow **[monitoring/README.md](monitoring/README.md)** for Helm values and appl
 
 Consul Helm values already set `ui.metrics.baseURL` for release name **`kps`**. If you change the Helm release name, run `kubectl get svc -n monitoring` and update [kubernetes/helm/consul/values-dc1.yaml](kubernetes/helm/consul/values-dc1.yaml) / `values-dc2.yaml`, then `helm upgrade consul`.
 
-### 9. Prepared queries
+### VM datacenter (optional third site)
+
+Use **[terraform/vm-datacenter](terraform/vm-datacenter)** for EC2: **one** Consul server VM and **one VM per HashiCups service** (each with its own private IP). Follow **[vm/README.md](vm/README.md)** for Consul (`vm/consul/*`), HashiCups Docker scripts (`vm/hashicups/scripts/`), mesh gateway on the server VM, and **[vm/monitoring/README.md](vm/monitoring/README.md)** for node_exporter and Promtail. Peer **dc-vm** to Kubernetes using your Consul version’s **VM ↔ K8s peering** guidance and the mesh gateway on **TCP 8443**.
+
+### Prepared queries
 
 Edit and register [scripts/prepared-query-geo.json](scripts/prepared-query-geo.json) per [docs/PREPARED-QUERIES.md](docs/PREPARED-QUERIES.md). Datacenter and failover fields must match your real `datacenter` names and peering topology.
 
