@@ -30,9 +30,9 @@ global:
 server:
   enabled: true
   replicas: 3
-  # kind: use "standard" or "consul-local-path" (see manifests/storageclass-kind.yaml).
-  # EKS/OpenShift: set to gp2, gp3, or your platform class.
-  storageClass: standard
+  # EKS: gp2 is the default StorageClass created by the EBS CSI driver add-on.
+  # To use gp3 (cheaper/faster), apply the StorageClass from terraform/eks/README.md and change this value.
+  storageClass: gp2
   extraConfig: |
     {
       "log_level": "TRACE"
@@ -59,7 +59,15 @@ connectInject:
     defaultEnabled: true
     defaultEnableMerging: true
     defaultMergedMetricsPort: "20100"
+    # External Prometheus scrape (pod IP): 20200/metrics — see Consul observe/telemetry/k8s.
+    defaultPrometheusScrapePort: "20200"
     defaultPrometheusScrapePath: "/metrics"
+    # Metrics listeners are configured when merging is enabled — Prometheus scrapes 20200.
+    # For custom app ports, teams must add:
+    #   consul.hashicorp.com/transparent-proxy-exclude-inbound-ports: "<port>"
+    # to their pod annotations, OR use the defaultToproxyExcludeInboundPorts below
+    # to exclude a platform-wide set of ports.
+    # defaultToproxyExcludeInboundPorts: "9090,8080"  # uncomment if needed globally
   apiGateway:
     manageExternalCRDs: true
     managedGatewayClass:
@@ -67,11 +75,12 @@ connectInject:
 
 meshGateway:
   enabled: true
-  # One replica is enough per cluster; runs as a pod on the same kind cluster as Consul and workloads.
   replicas: 1
   wanAddress:
+    # EKS: use the LoadBalancer hostname assigned by AWS. Consul registers this as the WAN address.
     source: Service
   service:
-    type: NodePort
+    type: LoadBalancer
     port: 443
-    nodePort: 31443
+    annotations: |
+      service.beta.kubernetes.io/aws-load-balancer-type: nlb

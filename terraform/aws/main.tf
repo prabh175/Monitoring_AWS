@@ -1,4 +1,5 @@
-# Layer 1: minimal AWS networking + instances. Extend with NLBs and records when Consul endpoints are known.
+# Layer 1: VPC, public subnets, and optional Route53 zones.
+# EKS clusters are in terraform/eks/ — apply this first to get vpc_id and public_subnet_ids.
 
 data "aws_availability_zones" "available" {
   state = "available"
@@ -11,6 +12,8 @@ resource "aws_vpc" "main" {
 
   tags = {
     Name = "${var.project_name}-vpc"
+    # Required tag for EKS to discover subnets for load balancers.
+    "kubernetes.io/role/elb" = "1"
   }
 }
 
@@ -31,6 +34,8 @@ resource "aws_subnet" "public" {
 
   tags = {
     Name = "${var.project_name}-public-${count.index + 1}"
+    # Required tag for EKS to use these subnets for public load balancers.
+    "kubernetes.io/role/elb" = "1"
   }
 }
 
@@ -53,6 +58,10 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# ── Optional bastion ────────────────────────────────────────────────────────────
+# Not needed for EKS (kubectl works from your laptop via the public API endpoint).
+# Enable if you add the VM datacenter (Step 7) and need SSH into private instances.
+
 data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
@@ -70,7 +79,7 @@ resource "aws_security_group" "bastion" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "SSH from allowed CIDRs (your Mac)"
+    description = "SSH from allowed CIDRs (your laptop)"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -109,74 +118,7 @@ resource "aws_instance" "bastion" {
   }
 }
 
-resource "aws_security_group" "nodes" {
-  name        = "${var.project_name}-nodes"
-  description = "Kind / Docker / SSH / mesh NodePort - tighten for production."
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  ingress {
-    description = "Mesh gateway NodePort (customer standard)"
-    from_port   = 31443
-    to_port     = 31443
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  ingress {
-    description = "Consul LAN (between nodes)"
-    from_port   = 8301
-    to_port     = 8302
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  ingress {
-    description = "Consul LAN UDP"
-    from_port   = 8301
-    to_port     = 8302
-    protocol    = "udp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "${var.project_name}-nodes"
-  }
-}
-
-resource "aws_instance" "node" {
-  count                       = var.node_count
-  ami                         = data.aws_ami.al2023.id
-  instance_type               = var.node_instance_type
-  subnet_id                   = aws_subnet.public[count.index % length(aws_subnet.public)].id
-  vpc_security_group_ids      = [aws_security_group.nodes.id]
-  associate_public_ip_address = true
-  key_name                    = var.ssh_key_name != "" ? var.ssh_key_name : null
-
-  root_block_device {
-    volume_size = 80
-    volume_type = "gp3"
-  }
-
-  tags = {
-    Name = "${var.project_name}-node-${count.index + 1}"
-    Role = "kind-or-consul-vm"
-  }
-}
+# ── Optional Route53 DNS ────────────────────────────────────────────────────────
 
 resource "aws_route53_zone" "private" {
   count = var.private_zone_domain != "" ? 1 : 0
@@ -196,20 +138,6 @@ check "bastion_inputs" {
     condition = !var.enable_bastion || (
       length(var.bastion_ssh_cidr_blocks) > 0 && var.ssh_key_name != ""
     )
-    error_message = "When enable_bastion is true, set bastion_ssh_cidr_blocks (e.g. your Mac public IP /32) and ssh_key_name in tfvars."
+    error_message = "When enable_bastion is true, set bastion_ssh_cidr_blocks (your laptop public IP /32) and ssh_key_name in tfvars."
   }
 }
-
-# After Consul NLBs exist, add aws_route53_record resources (failover or weighted) pointing to NLB aliases.
-# Example pattern (commented):
-#
-# resource "aws_route53_record" "dc1_ui" {
-#   zone_id = aws_route53_zone.private[0].zone_id
-#   name    = "dc1.${var.private_zone_domain}"
-#   type    = "A"
-#   alias {
-#     name                   = aws_lb.dc1_consul.dns_name
-#     zone_id                = aws_lb.dc1_consul.zone_id
-#     evaluate_target_health = true
-#   }
-# }

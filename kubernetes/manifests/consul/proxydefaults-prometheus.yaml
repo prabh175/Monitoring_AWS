@@ -1,0 +1,17 @@
+# Optional mesh-wide default: bind Envoy Prometheus stats to 0.0.0.0:20200.
+# Aligns with HashiCorp's observability tutorial:
+# https://developer.hashicorp.com/consul/tutorials/get-started-kubernetes/kubernetes-gs-observability
+#
+# With connectInject.metrics.defaultPrometheusScrapePort: "20200" in Helm values,
+# the injector usually configures the same listener; this CRD reinforces it for all
+# proxies after sidecar restart. It does NOT fix merged app scrape failures (e.g.
+# missing /metrics on the app port) — fix workload annotations or disable merging.
+#
+# kubectl apply -f kubernetes/manifests/consul/proxydefaults-prometheus.yaml -n consul
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ProxyDefaults
+metadata:
+  name: global
+spec:
+  config:
+    envoy_prometheus_bind_addr: "0.0.0.0:20200"

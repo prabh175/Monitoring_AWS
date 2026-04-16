@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars (gitignored). Values come from terraform/aws outputs.
+#
+# cd terraform/aws
+# terraform output vpc_id           → paste below
+# terraform output public_subnet_ids → paste below (need all 3 subnets for node AZ spread)
+
+aws_region = "us-east-1"
+
+vpc_id     = "vpc-0abc1234def56789a"
+subnet_ids = [
+  "subnet-0aaa111122223333a",
+  "subnet-0bbb444455556666b",
+  "subnet-0ccc777788889999c",
+]
+
+kubernetes_version = "1.31"
+node_instance_type = "m5.xlarge"   # 16 GiB, 4 vCPU — 3 nodes = 48 GiB per cluster
+node_count         = 3
+project_name       = "consul-mesh-demo"
+
+# IAM role ARN for kubectl access from your laptop.
+# Strip the session suffix from your assumed-role ARN:
+#   arn:aws:sts::123456:assumed-role/MyRole/session  →  arn:aws:iam::123456:role/MyRole
+# developer_iam_role_arn = "arn:aws:iam::851725365054:role/aws_prabhjit.singh_test-developer"

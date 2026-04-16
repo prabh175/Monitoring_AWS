@@ -77,6 +77,72 @@ prometheus:
             target_label: __metrics_path__
             replacement: /v1/agent/metrics?format=prometheus
 
+      # ── VM datacenter scrape jobs ────────────────────────────────────────────
+      # Replace the placeholder IPs with the private IPs from:
+      #   cd terraform/vm-datacenter && terraform output
+      # Open the following ports from the EKS node security group to the VM security group:
+      #   9100 (node_exporter), 9107 (consul_exporter), 8500 (Consul agent), 19000 (Envoy admin)
+
+      # Host metrics — all VM datacenter instances
+      - job_name: vm-datacenter-node-exporter
+        static_configs:
+          - targets:
+              - 10.0.X.X:9100   # consul-server VM private IP
+              - 10.0.X.X:9100   # hashicups-postgres VM
+              - 10.0.X.X:9100   # hashicups-product-api VM
+              - 10.0.X.X:9100   # hashicups-payments VM
+              - 10.0.X.X:9100   # hashicups-public-api VM
+              - 10.0.X.X:9100   # hashicups-frontend VM
+        labels:
+          datacenter: dc-vm
+          job: node-exporter
+
+      # Consul catalog and health checks — consul-server VM only
+      - job_name: vm-datacenter-consul-exporter
+        static_configs:
+          - targets:
+              - 10.0.X.X:9107   # consul-server VM private IP
+        labels:
+          datacenter: dc-vm
+          job: consul-exporter
+
+      # Consul internal metrics (Raft, RPC) — both server and client agents
+      - job_name: vm-datacenter-consul-agent-metrics
+        metrics_path: /v1/agent/metrics
+        params:
+          format: [prometheus]
+        # If ACLs are enabled add: bearer_token: <metrics-token>
+        static_configs:
+          - targets:
+              - 10.0.X.X:8500   # consul-server VM
+              - 10.0.X.X:8500   # hashicups-postgres VM (Consul client)
+              - 10.0.X.X:8500   # hashicups-product-api VM
+              - 10.0.X.X:8500   # hashicups-payments VM
+              - 10.0.X.X:8500   # hashicups-public-api VM
+              - 10.0.X.X:8500   # hashicups-frontend VM
+        labels:
+          datacenter: dc-vm
+          job: consul-agent
+
+      # Envoy sidecar metrics — one per HashiCups service VM (not the consul-server VM)
+      # Requires --admin-bind 0.0.0.0:19000 in connect-envoy@.service (already set).
+      - job_name: vm-datacenter-envoy-sidecars
+        metrics_path: /stats/prometheus
+        static_configs:
+          - targets:
+              - 10.0.X.X:19000  # hashicups-postgres Envoy
+              - 10.0.X.X:19000  # hashicups-product-api Envoy
+              - 10.0.X.X:19000  # hashicups-payments Envoy
+              - 10.0.X.X:19000  # hashicups-public-api Envoy
+              - 10.0.X.X:19000  # hashicups-frontend Envoy
+        relabel_configs:
+          # Use instance label to distinguish which service's Envoy this is
+          - source_labels: [__address__]
+            target_label: instance
+        labels:
+          datacenter: dc-vm
+          job: envoy-sidecar
+
 prometheusOperator:
   enabled: true
 

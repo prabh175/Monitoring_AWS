@@ -1,0 +1,314 @@
+# Standalone Prometheus — no operator, no CRDs.
+# Uses kubernetes_sd_configs for operator-like auto-discovery via pod/service annotations.
+#
+# HOW TEAMS SELF-SERVICE (no platform ticket needed):
+#   Add to pod template annotations:
+#     prometheus.io/scrape: "true"
+#     prometheus.io/port: "8080"      # optional, defaults to first container port
+#     prometheus.io/path: "/metrics"  # optional, defaults to /metrics
+#   Prometheus discovers the pod within one scrape interval (15s).
+#
+# The prometheus-community chart merges default scrapeConfigs (kubernetes-pods,
+# etc.) with serverFiles.prometheus.yml. Consul Helm annotates server pods with
+# prometheus.io/port=8501; the default kubernetes-pods job duplicates consul-servers
+# and can scrape the wrong scheme. Disable the defaults; teams use job
+# "annotated-pods" for prometheus.io/scrape opt-in (servers dropped — see below).
+scrapeConfigs:
+  kubernetes-pods:
+    enabled: false
+  kubernetes-pods-slow:
+    enabled: false
+
+server:
+  # Mount the Consul ACL token so scrape jobs can authenticate
+  extraSecretMounts:
+    - name: consul-metrics-token
+      secretName: consul-metrics-token
+      mountPath: /var/run/secrets/consul
+      readOnly: true
+
+  persistentVolume:
+    enabled: true
+    # gp2 is created by the EBS CSI driver add-on in terraform/eks/main.tf.
+    # If kubectl get storageclass shows a different default, update this value.
+    storageClass: gp2
+    size: 20Gi
+
+  global:
+    scrape_interval: 15s
+    evaluation_interval: 15s
+
+  # Alert rules loaded from:
+  #   1. This file (platform-owned: Consul, mesh, infrastructure)
+  #   2. /etc/prometheus/rules/ directory (team-owned: merged by CronJob from namespace ConfigMaps)
+  alerting_rules.yml:
+    groups:
+      - name: consul.rules
+        rules:
+          - alert: ConsulServerDown
+            expr: up{job="consul-servers"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              team: platform
+            annotations:
+              summary: "Consul server {{ $labels.pod }} is down"
+
+          - alert: ConsulLeadershipChanged
+            expr: changes(consul_raft_leader[5m]) > 0
+            for: 0m
+            labels:
+              severity: warning
+              team: platform
+            annotations:
+              summary: "Consul Raft leadership changed in {{ $labels.datacenter }}"
+
+          - alert: MeshGatewayDown
+            expr: up{job="consul-mesh-gateway"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              team: platform
+            annotations:
+              summary: "Mesh gateway {{ $labels.pod }} is down"
+
+serverFiles:
+  prometheus.yml:
+    scrape_configs:
+
+      # ----------------------------------------------------------------
+      # PLATFORM: Consul servers
+      # HTTPS :8501 + bearer token + scrape_protocols (OpenMetrics Accept breaks
+      # promhttp here). tls_config uses chart CA; insecure_skip_verify avoids
+      # hostname mismatch on pod IPs. Duplicate scrapes from kubernetes-pods /
+      # annotated-pods are disabled/dropped elsewhere in this file.
+      # ----------------------------------------------------------------
+      - job_name: consul-servers
+        scrape_protocols: [PrometheusText1.0.0]
+        metrics_path: /v1/agent/metrics
+        params:
+          format: [prometheus]
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/consul/token
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [consul]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_component]
+            action: keep
+            regex: server
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:8501
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+      # ----------------------------------------------------------------
+      # PLATFORM: Consul mesh gateways
+      # scrape_protocols: Envoy /stats/prometheus-style text; OpenMetrics Accept
+      # can confuse exposition parsers (ParseFloat errors on non-metric bodies).
+      # ----------------------------------------------------------------
+      - job_name: consul-mesh-gateway
+        scrape_protocols: [PrometheusText1.0.0]
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [consul]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_component]
+            action: keep
+            regex: mesh-gateway
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:20200
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+      # ----------------------------------------------------------------
+      # PLATFORM: Consul API gateway (auto-discovers all Gateway pods)
+      # ----------------------------------------------------------------
+      - job_name: consul-api-gateway
+        scrape_protocols: [PrometheusText1.0.0]
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_gateway_consul_hashicorp_com_managed]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:20200
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_label_gateway_consul_hashicorp_com_name]
+            target_label: gateway_name
+
+      # ----------------------------------------------------------------
+      # PLATFORM: Connect-injected pods — merged app + Envoy Prometheus metrics
+      # External scrape: pod-ip:20200/metrics (defaultPrometheusScrapePort/Path).
+      # Local merge server inside dataplane: 127.0.0.1:20100/stats/prometheus — do
+      # NOT scrape 20100 with /metrics (404). See Consul docs observe/telemetry/k8s.
+      # scrape_protocols: classic text exposition (OpenMetrics negotiation issues).
+      #
+      # If targets show ParseFloat / parsing "to": the merged body can contain a
+      # plaintext line like: failed to scrape metrics at url "http://127.0.0.1:9090/metrics"
+      # when dataplane cannot reach the app's metrics URL. That line is NOT valid
+      # exposition — fix the app endpoint (port/path/listen addr) or disable merging
+      # per pod; see docs/MONITORING-GUIDE.md (merged metrics troubleshooting).
+      # ----------------------------------------------------------------
+      - job_name: consul-connect-envoy
+        scrape_protocols: [PrometheusText1.0.0]
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_consul_hashicorp_com_connect_inject_status]
+            action: keep
+            regex: injected
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:20200
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+          # Add team label from namespace (set by onboarding script)
+          - source_labels: [__meta_kubernetes_namespace_label_team]
+            target_label: team
+
+      # ----------------------------------------------------------------
+      # TEAMS: Annotation-based auto-discovery (operator-like experience)
+      # Teams add these annotations to their pod spec — no ticket needed:
+      #   prometheus.io/scrape: "true"
+      #   prometheus.io/port: "8080"    (optional)
+      #   prometheus.io/path: "/metrics" (optional)
+      # Note: named "annotated-pods" to avoid collision with the chart's
+      # built-in "kubernetes-pods" default scrape job.
+      # ----------------------------------------------------------------
+      - job_name: annotated-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape pods that opt in
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          # Consul server pods also have prometheus.io/scrape; chart sets port 8501
+          # + scheme https. This job does not copy prometheus.io/scheme, so scrapes
+          # become http://pod:8501 and fail. Platform job consul-servers handles
+          # servers on http://pod:8500 with ACL + scrape_protocols.
+          - source_labels: [__meta_kubernetes_pod_label_component]
+            action: drop
+            regex: server
+          # Skip pods already scraped by consul-connect-envoy job
+          - source_labels: [__meta_kubernetes_pod_annotation_consul_hashicorp_com_connect_inject_status]
+            action: drop
+            regex: injected
+          # Use custom port if specified
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: (.+)
+            target_label: __address__
+            replacement: $1
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          # Use custom path if specified
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # Standard labels
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+          # Team label from namespace annotation (set by onboarding script)
+          - source_labels: [__meta_kubernetes_namespace_label_team]
+            target_label: team
+
+      # ----------------------------------------------------------------
+      # TEAMS: Service-level annotation-based discovery
+      # Teams annotate their Service (not pod) for aggregated endpoints.
+      # Note: named "annotated-services" to avoid collision with the chart's
+      # built-in "kubernetes-services" default scrape job.
+      # ----------------------------------------------------------------
+      - job_name: annotated-services
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            regex: (.+)
+            target_label: __address__
+            replacement: $1
+          - source_labels: [__meta_kubernetes_endpoint_address_target_kind, __meta_kubernetes_endpoint_address_target_name]
+            separator: /
+            target_label: endpoint
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_namespace_label_team]
+            target_label: team
+
+# RBAC — Prometheus needs read access to pods/services across all namespaces
+rbac:
+  create: true
+
+serviceAccounts:
+  server:
+    create: true
+    name: prometheus
+
+# Expose via ClusterIP — Grafana queries it internally
+service:
+  type: ClusterIP
+
+# Pushgateway disabled — not needed for pull-based scraping
+pushgateway:
+  enabled: false
+
+# Alertmanager — platform configures routing, teams get their own receiver
+alertmanager:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClass: gp2
+    size: 2Gi
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: [namespace, team, alertname]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: platform-default
+      routes:
+        # Route per-team alerts to team receivers based on the `team` label
+        - match_re:
+            team: .+
+          receiver: team-receiver
+          continue: true
+    receivers:
+      - name: platform-default
+      - name: team-receiver
+        # Teams configure their own Slack/PagerDuty via a Secret
+        # Platform reads it from: monitoring/team-<name>-alertmanager-secret

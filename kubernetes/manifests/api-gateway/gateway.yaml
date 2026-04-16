@@ -1,0 +1,18 @@
+# Consul API Gateway — provisions an AWS NLB via the consul GatewayClass.
+# The GatewayClass is created automatically by Consul after Gateway API CRDs are installed.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: hashicups
+  namespace: consul
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  gatewayClassName: consul
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All

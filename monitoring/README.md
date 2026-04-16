@@ -79,7 +79,7 @@ kubectl apply -f manifests/podmonitor-consul-server.yaml
 
 If the PodMonitor CRD is not found, wait until `kube-prometheus-stack` finishes installing CRDs.
 
-**Connect / Envoy sidecars:** injected pods can expose merged metrics on port `20100` when `connectInject.metrics.defaultEnabled` is true. The PodMonitor in this folder includes a second endpoint for pods labeled as connect-injected; tune selectors to match your chart labels if needed.
+**Connect / Envoy sidecars:** merged metrics are scraped at **`pod-ip:20200/metrics`** when merging is enabled (internal merge listener uses **20100**). See `docs/MONITORING-GUIDE.md` and Consul’s [K8s telemetry](https://developer.hashicorp.com/consul/docs/observe/telemetry/k8s) doc.
 
 ## 3. Loki (log aggregation)
 

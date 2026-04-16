@@ -1,0 +1,97 @@
+# Standalone Grafana — no operator.
+# Datasources and folder provisioning via ConfigMaps (Grafana's native sidecar).
+# Teams get their own folder automatically when onboarded via scripts/onboard-team.sh.
+
+adminUser: admin
+adminPassword: changeme   # override via --set or a Secret in production
+
+persistence:
+  enabled: true
+  storageClassName: gp2
+  size: 5Gi
+
+service:
+  type: LoadBalancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+
+# Sidecar watches for ConfigMaps/Secrets labelled grafana_datasource=1 or grafana_dashboard=1
+# and hot-loads them without a Grafana restart.
+sidecar:
+  datasources:
+    enabled: true
+    label: grafana_datasource
+    labelValue: "1"
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    # Search all namespaces — teams deploy dashboard ConfigMaps in their own namespace
+    searchNamespace: ALL
+    folderAnnotation: grafana_folder   # ConfigMap annotation sets which folder the dashboard lands in
+    provider:
+      foldersFromFilesStructure: false
+      allowUiUpdates: true
+
+# Platform datasources — provisioned once, available to all teams
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus-dc1
+        type: prometheus
+        url: http://prometheus-server.monitoring.svc:80
+        access: proxy
+        isDefault: true
+        jsonData:
+          timeInterval: 15s
+
+      - name: Loki-dc1
+        type: loki
+        url: http://loki.monitoring.svc:3100
+        access: proxy
+        jsonData:
+          maxLines: 1000
+
+# Platform dashboards — provisioned at install, shared across all teams
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: platform
+        orgId: 1
+        folder: Platform
+        type: file
+        disableDeletion: true
+        editable: false
+        options:
+          path: /var/lib/grafana/dashboards/platform
+
+dashboards:
+  platform:
+    consul-cluster:
+      gnetId: 13396    # HashiCorp Consul Grafana dashboard from grafana.com
+      revision: 2
+      datasource: Prometheus-dc1
+
+    consul-service-mesh:
+      gnetId: 15939    # Consul service mesh metrics
+      revision: 1
+      datasource: Prometheus-dc1
+
+# RBAC — Grafana uses viewer role by default for anonymous/team users
+# Platform team has Editor/Admin via admin credentials
+grafana.ini:
+  server:
+    root_url: "%(protocol)s://%(domain)s/"
+  auth:
+    disable_login_form: false
+  auth.anonymous:
+    enabled: false
+  # Auto-assign new users to a team-scoped role
+  users:
+    auto_assign_org_role: Viewer
+  # Each team gets their own folder — editors can only edit dashboards in their folder
+  # (enforced via Grafana Teams + folder permissions set by onboard-team.sh)
+  feature_toggles:
+    enable: publicDashboards

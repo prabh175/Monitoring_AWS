@@ -2,11 +2,16 @@
 # Instance name must match the parent service name (e.g. connect-envoy@postgres).
 # Install: cp vm/hashicups/systemd/connect-envoy@.service /etc/systemd/system/
 #          systemctl daemon-reload
+#          systemctl enable --now connect-envoy@<service-name>
+#
+# Envoy admin port (19000) is bound to 0.0.0.0 so Prometheus in EKS can scrape
+# /stats/prometheus from the VPC. Open TCP 19000 from the EKS node security group
+# to the VM security group (see terraform/vm-datacenter).
 #
 # If ACLs are enabled on the agent, set CONSUL_HTTP_TOKEN in /etc/consul.d/consul.env
 
 [Unit]
-Description=Consul Connect sidecar for %i
+Description=Consul Connect Envoy sidecar for %i
 After=consul.service docker.service
 Requires=consul.service
 
@@ -15,7 +20,15 @@ Type=simple
 User=consul
 Group=consul
 EnvironmentFile=-/etc/consul.d/consul.env
-ExecStart=/usr/bin/consul connect envoy -sidecar-for %i
+
+# --admin-bind 0.0.0.0:19000  exposes Envoy admin (and /stats/prometheus) on all interfaces.
+# Each service gets the same port — only one sidecar runs per VM in this demo layout.
+ExecStart=/usr/bin/consul connect envoy \
+  -sidecar-for %i \
+  -- \
+  -l warning \
+  --admin-bind 0.0.0.0:19000
+
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGINT
 Restart=on-failure

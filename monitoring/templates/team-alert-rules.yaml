@@ -1,0 +1,109 @@
+# TEAM ALERT RULES TEMPLATE
+#
+# NOTE ON TRANSPARENT PROXY + mTLS:
+# If your pod is in the Consul service mesh (connect-inject=true):
+#   - Merged metrics: scrape pod-ip:20200/metrics (internal merge path uses 20100/stats/prometheus)
+#   - Any OTHER custom metrics port (e.g. 8080) IS intercepted by tproxy → scraping fails
+#   - Fix: add this annotation to your pod spec:
+#       consul.hashicorp.com/transparent-proxy-exclude-inbound-ports: "8080"
+#   - Better: route ALL metrics through merged scrape 20200 via Consul metrics merging
+# Copy this file, replace <team-name> and <namespace> with your values.
+# Apply it to your namespace — rules go live in Prometheus within ~60 seconds.
+# No platform ticket needed.
+#
+# USAGE:
+#   cp monitoring/templates/team-alert-rules.yaml my-rules.yaml
+#   # Edit my-rules.yaml with your rules
+#   kubectl apply -f my-rules.yaml
+#
+# TO UPDATE RULES:
+#   kubectl edit configmap <team-name>-alert-rules -n <namespace>
+#   # Changes sync automatically within 60 seconds
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: <team-name>-alert-rules
+  namespace: <namespace>
+  labels:
+    # Required — triggers the rule-merger CronJob
+    monitoring/rules: "true"
+  annotations:
+    monitoring/team: "<team-name>"
+data:
+  rules.yaml: |
+    groups:
+      # ----------------------------------------------------------------
+      # Service availability
+      # ----------------------------------------------------------------
+      - name: <team-name>.availability
+        rules:
+          - alert: ServiceDown
+            expr: up{namespace="<namespace>", app="<your-app>"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              team: <team-name>
+            annotations:
+              summary: "{{ $labels.app }} is down"
+              description: "{{ $labels.pod }} has been unreachable for more than 1 minute."
+
+          - alert: PodRestartingFrequently
+            expr: rate(kube_pod_container_status_restarts_total{namespace="<namespace>"}[15m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: <team-name>
+            annotations:
+              summary: "Pod {{ $labels.pod }} is restarting frequently"
+
+      # ----------------------------------------------------------------
+      # Consul service mesh (Envoy sidecar metrics)
+      # Only applies to pods with consul.hashicorp.com/connect-inject=true
+      # ----------------------------------------------------------------
+      - name: <team-name>.mesh
+        rules:
+          - alert: HighEnvoyErrorRate
+            # envoy_cluster_upstream_rq_xx is the response code class counter
+            expr: |
+              rate(envoy_cluster_upstream_rq_xx{
+                namespace="<namespace>",
+                envoy_response_code_class="5"
+              }[5m]) > 0.05
+            for: 2m
+            labels:
+              severity: warning
+              team: <team-name>
+            annotations:
+              summary: "High 5xx error rate for {{ $labels.app }}"
+              description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+          - alert: HighEnvoyP99Latency
+            expr: |
+              histogram_quantile(0.99,
+                rate(envoy_cluster_upstream_rq_time_bucket{namespace="<namespace>"}[5m])
+              ) > 500
+            for: 2m
+            labels:
+              severity: warning
+              team: <team-name>
+            annotations:
+              summary: "P99 latency above 500ms for {{ $labels.app }}"
+              description: "P99 latency is {{ $value }}ms."
+
+      # ----------------------------------------------------------------
+      # Custom application metrics
+      # Add your own rules below using the same format.
+      # Metric labels always include: namespace, pod, app, team
+      # ----------------------------------------------------------------
+      - name: <team-name>.custom
+        rules: []
+        # Example:
+        # - alert: QueueDepthHigh
+        #   expr: my_queue_depth{namespace="<namespace>"} > 1000
+        #   for: 5m
+        #   labels:
+        #     severity: warning
+        #     team: <team-name>
+        #   annotations:
+        #     summary: "Queue depth is {{ $value }} — above threshold"

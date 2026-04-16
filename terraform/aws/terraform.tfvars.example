@@ -3,17 +3,19 @@
 
 aws_region   = "us-east-1"
 project_name = "consul-mesh-demo"
-node_count   = 2
 
-# EC2 key pair name in this region (same for bastion and kind nodes).
-ssh_key_name = "your-ec2-keypair-name"
+# EC2 key pair name in this region (required when enable_bastion = true).
+# ssh_key_name = "your-ec2-keypair-name"
 
-enable_bastion          = true
-bastion_ssh_cidr_blocks = ["203.0.113.50/32"] # replace with YOUR public IP /32
-bastion_instance_type   = "t3.micro"
+# Bastion: disabled by default — not needed for EKS.
+# Enable only if you add the VM datacenter (Step 7) and need SSH to private instances.
+# enable_bastion          = true
+# bastion_ssh_cidr_blocks = ["203.0.113.50/32"]   # your laptop public IP /32
+# bastion_instance_type   = "t3.micro"
 
-# Existing public hosted zone in this account. Creates dc1, dc2, ... (public + split-horizon private).
-route53_public_zone_name = "your-public-hosted-zone.example.com"
+# Optional: existing public Route53 hosted zone. Creates a split-horizon private zone.
+# A records for EKS LB endpoints are added separately after Consul Helm install.
+# route53_public_zone_name = "your-zone.example.com"
 
-# Optional VPC-only private zone (different apex than route53_public_zone_name).
+# Optional: separate private-only Route53 zone attached to the VPC.
 # private_zone_domain = ""

@@ -19,6 +19,9 @@ terraform.rc
 .env.local
 .env.*.local
 
+# SSH / TLS private keys (never commit)
+*.pem
+
 # Consul / TLS material (generate certs under a local-only directory if needed)
 *.hclic
 *.hclic.*

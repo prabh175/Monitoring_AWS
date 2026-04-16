@@ -1,0 +1,102 @@
+# Rule merger CronJob — gives teams operator-like self-service for alert rules.
+#
+# HOW IT WORKS:
+#   1. Teams create a ConfigMap in their namespace labelled: monitoring/rules=true
+#   2. This CronJob runs every 60s, finds all such ConfigMaps across all namespaces
+#   3. Merges them into a single ConfigMap in the monitoring namespace
+#   4. Prometheus config-reloader detects the change and reloads rules
+#
+# TEAM WORKFLOW (no platform ticket):
+#   kubectl apply -f my-alert-rules.yaml   # see templates/team-alert-rules.yaml
+#   # Rules are live within ~60 seconds
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rule-merger
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rule-merger
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, namespaces]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rule-merger
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: rule-merger
+subjects:
+  - kind: ServiceAccount
+    name: rule-merger
+    namespace: monitoring
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rule-merger
+  namespace: monitoring
+spec:
+  # Runs every minute — rules are live within 60s of a team applying their ConfigMap
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: rule-merger
+          restartPolicy: OnFailure
+          containers:
+            - name: merger
+              image: bitnami/kubectl:latest
+              command: [/bin/bash, -c]
+              args:
+                - |
+                  set -euo pipefail
+
+                  MERGED_CM="prometheus-team-rules"
+                  MONITORING_NS="monitoring"
+                  LABEL="monitoring/rules=true"
+
+                  echo "=== Rule merger starting ==="
+
+                  # Collect all team rule ConfigMaps across all namespaces
+                  RULES_YAML=""
+                  while IFS= read -r line; do
+                    NS=$(echo "$line" | awk '{print $1}')
+                    CM=$(echo "$line" | awk '{print $2}')
+                    TEAM=$(kubectl get namespace "$NS" -o jsonpath='{.metadata.labels.team}' 2>/dev/null || echo "$NS")
+
+                    echo "  Merging rules from namespace=$NS configmap=$CM team=$TEAM"
+
+                    # Extract the rules content and add team label to each rule group
+                    CONTENT=$(kubectl get configmap "$CM" -n "$NS" -o jsonpath='{.data.rules\.yaml}' 2>/dev/null || true)
+                    if [[ -n "$CONTENT" ]]; then
+                      # Prefix group names with team name to avoid collisions
+                      CONTENT=$(echo "$CONTENT" | sed "s/^  - name: /  - name: ${TEAM}./")
+                      RULES_YAML="${RULES_YAML}
+                  ${CONTENT}"
+                    fi
+                  done < <(kubectl get configmap --all-namespaces -l "$LABEL" \
+                    --no-headers -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name")
+
+                  if [[ -z "$RULES_YAML" ]]; then
+                    echo "  No team rule ConfigMaps found."
+                    RULES_YAML="# No team rules defined yet."
+                  fi
+
+                  # Write merged rules to the central ConfigMap in monitoring namespace
+                  kubectl create configmap "$MERGED_CM" \
+                    --namespace "$MONITORING_NS" \
+                    --from-literal="rules.yaml=${RULES_YAML}" \
+                    --dry-run=client -o yaml \
+                    | kubectl apply -f -
+
+                  echo "=== Rule merger complete. Prometheus will reload within 15s. ==="

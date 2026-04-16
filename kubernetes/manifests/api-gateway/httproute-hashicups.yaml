@@ -1,0 +1,20 @@
+# Route all HTTP traffic on the gateway to the HashiCups frontend.
+# The frontend service is in the default namespace; ReferenceGrant allows cross-namespace routing.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hashicups
+  namespace: default
+spec:
+  parentRefs:
+    - name: hashicups
+      namespace: consul
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: frontend
+          namespace: default
+          port: 80

@@ -29,7 +29,7 @@ global:
 server:
   enabled: true
   replicas: 3
-  storageClass: standard
+  storageClass: gp2
   extraConfig: |
     {
       "log_level": "TRACE"
@@ -53,7 +53,9 @@ connectInject:
     defaultEnabled: true
     defaultEnableMerging: true
     defaultMergedMetricsPort: "20100"
+    defaultPrometheusScrapePort: "20200"
     defaultPrometheusScrapePath: "/metrics"
+    # defaultToproxyExcludeInboundPorts: "9090,8080"  # uncomment to exclude platform-wide ports
   apiGateway:
     manageExternalCRDs: true
     managedGatewayClass:
@@ -65,6 +67,7 @@ meshGateway:
   wanAddress:
     source: Service
   service:
-    type: NodePort
+    type: LoadBalancer
     port: 443
-    nodePort: 31443
+    annotations: |
+      service.beta.kubernetes.io/aws-load-balancer-type: nlb
